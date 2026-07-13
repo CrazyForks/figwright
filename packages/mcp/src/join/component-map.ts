@@ -63,6 +63,14 @@ export interface ComponentMapping {
   status: MappingStatus;
   /** Which path produced the mapping. */
   source: 'map-file' | 'scan';
+  /**
+   * Set when the map file had a row for this component but its target neither parsed in the scan
+   * nor exists on disk — a stale recorded mapping (the file was deleted/renamed after it was
+   * recorded). The mapping degrades to the fuzzy/unmapped result rather than asserting a phantom
+   * import; this carries the dead row so the caller can re-record or remove it. Absent on a healthy
+   * override.
+   */
+  staleOverride?: { name: string; filePath: string };
 }
 
 const norm = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -171,6 +179,12 @@ export interface JoinOptions {
   threshold: number;
   /** Explicit figmaName → code target overrides (highest authority). */
   overrides?: ReadonlyMap<string, { name: string; filePath: string }>;
+  /**
+   * The override keys (raw and normalized, mirroring `overrides`) whose target file exists on disk.
+   * The tool computes this (fs lives there, not in this pure join). An override is trusted when the
+   * scan resolves it OR its file is on disk; only one that is neither is treated as stale.
+   */
+  overridesOnDisk?: ReadonlySet<string>;
 }
 
 /** Join one Figma component usage against the scanned components + any explicit override. */
@@ -190,23 +204,44 @@ const joinOne = (
   const override = opts.overrides?.get(usage.name) ?? opts.overrides?.get(norm(usage.name));
   if (override !== undefined) {
     const component = resolveOverrideComponent(override, scanned);
-    const { matchedProps, unmatchedProps } = component
-      ? partitionAxes(usage.variantAxes, component)
-      : { matchedProps: [], unmatchedProps: [] };
-    return {
-      ...shared,
-      candidate: {
-        name: override.name,
-        filePath: override.filePath,
-        confidence: 1,
-        matchedProps,
-        unmatchedProps,
-      },
-      status: 'high',
-      source: 'map-file',
-    };
+    // Trust the override when the scan resolved it (a parsed component) OR its file is on disk (the
+    // scanner missed a real file — an unusual export the human/LLM knew about). Only an override that
+    // is neither is stale: honouring it would ship an import of a deleted/renamed module, strictly
+    // worse than falling back to the fuzzy guess. So a stale one falls through, tagged for cleanup.
+    const onDisk =
+      opts.overridesOnDisk?.has(usage.name) === true ||
+      opts.overridesOnDisk?.has(norm(usage.name)) === true;
+    if (component !== undefined || onDisk) {
+      const { matchedProps, unmatchedProps } = component
+        ? partitionAxes(usage.variantAxes, component)
+        : { matchedProps: [], unmatchedProps: [] };
+      return {
+        ...shared,
+        candidate: {
+          name: override.name,
+          filePath: override.filePath,
+          confidence: 1,
+          matchedProps,
+          unmatchedProps,
+        },
+        status: 'high',
+        source: 'map-file',
+      };
+    }
+    // Stale: degrade to the normal join below, but carry the dead row so the caller can fix it.
+    return { ...joinScan(usage, scanned, opts, shared), staleOverride: override };
   }
 
+  return joinScan(usage, scanned, opts, shared);
+};
+
+/** The fuzzy-scan half of the join (no override) — also the fallback when an override is stale. */
+const joinScan = (
+  usage: FigmaComponentUsage,
+  scanned: readonly ScannedComponent[],
+  opts: JoinOptions,
+  shared: Omit<ComponentMapping, 'candidate' | 'status' | 'source' | 'staleOverride'>,
+): ComponentMapping => {
   const match = bestNameMatch(usage.name, scanned);
   if (match === null || match.score < 0.5) {
     return { ...shared, status: 'unmapped', source: 'scan' };
@@ -313,6 +348,63 @@ export const collectFigmaComponents = (
   return [...byKey.values()];
 };
 
+// The exact column labels a header row uses. Matched whole-cell (not as a substring) so a real data
+// row is never mistaken for the header: a figma name that merely contains "figma" or a ref that
+// contains "value" (e.g. `| Figma/Logo | brand-value |`) stays a data row. A row is a header only
+// when BOTH of its first two cells are pure labels.
+const MAP_HEADER_CELLS = new Set([
+  'figma',
+  'figma name',
+  'figmaname',
+  'name',
+  'code',
+  'path',
+  'component',
+  'token',
+  'ref',
+  'value',
+  'css',
+  'var',
+  'cssvar',
+  'mapping',
+]);
+/** A markdown alignment/separator cell: dashes with optional leading/trailing colons (`:---:`). */
+const isSeparatorCell = (s: string): boolean => /^:?-+:?$/.test(s);
+
+/**
+ * Parse one map-file line into [figmaName, target], or null when it carries no mapping (a blank
+ * line, a table header, or an alignment separator). Shared by the component and token map parsers
+ * so both skip headers/separators identically. Accepts a table row (`| Figma | target |`) or an
+ * arrow line (`Figma -> target`).
+ */
+export const parseMapLine = (line: string): [string, string] | null => {
+  let figma: string;
+  let target: string;
+  const arrow = line.split('->');
+  if (arrow.length === 2 && arrow[0] !== undefined && arrow[1] !== undefined) {
+    figma = arrow[0].trim();
+    target = arrow[1].trim();
+  } else if (line.trim().startsWith('|')) {
+    const cells = line
+      .split('|')
+      .map(c => c.trim())
+      .filter(Boolean);
+    if (cells[0] === undefined || cells[1] === undefined) return null;
+    figma = cells[0];
+    target = cells[1];
+  } else {
+    return null;
+  }
+  if (!figma || !target) return null;
+  if (isSeparatorCell(target)) return null; // `| --- | --- |` separator (or a dashes-only target)
+  // Header only when BOTH cells are pure labels, so a data row that merely contains a label word
+  // (`| Figma/Logo | brand-value |`) is never mistaken for it.
+  if (MAP_HEADER_CELLS.has(figma.toLowerCase()) && MAP_HEADER_CELLS.has(target.toLowerCase())) {
+    return null;
+  }
+  return [figma, target];
+};
+
 /**
  * Parse docs/figma-component-map.md overrides. Accepts two-column markdown table rows (`| FigmaName
  * | path/or/Name |`) and arrow lines (`FigmaName -> path/or/Name`), skipping the header/separator.
@@ -320,32 +412,14 @@ export const collectFigmaComponents = (
  */
 export const parseMapFile = (markdown: string): Map<string, { name: string; filePath: string }> => {
   const out = new Map<string, { name: string; filePath: string }>();
-  const add = (figma: string, target: string): void => {
-    const f = figma.trim();
-    const t = target.trim();
-    if (!f || !t || /^-+$/.test(t)) return;
+  for (const line of markdown.split('\n')) {
+    const row = parseMapLine(line);
+    if (row === null) continue;
+    const [f, t] = row;
     const base = t.split('/').pop() ?? t;
     const name = base.replace(/\.[a-z]+$/i, '');
     out.set(f, { name, filePath: t });
     out.set(norm(f), { name, filePath: t });
-  };
-
-  for (const line of markdown.split('\n')) {
-    const arrow = line.split('->');
-    if (arrow.length === 2 && arrow[0] !== undefined && arrow[1] !== undefined) {
-      add(arrow[0], arrow[1]);
-      continue;
-    }
-    if (line.trim().startsWith('|')) {
-      const cells = line
-        .split('|')
-        .map(c => c.trim())
-        .filter(Boolean);
-      if (cells.length >= 2 && cells[0] !== undefined && cells[1] !== undefined) {
-        if (/figma/i.test(cells[0]) && /code|path|component/i.test(cells[1])) continue; // header
-        add(cells[0], cells[1]);
-      }
-    }
   }
   return out;
 };
