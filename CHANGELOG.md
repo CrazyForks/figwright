@@ -1,5 +1,84 @@
 # Changelog
 
+## v0.3.0
+
+[compare changes](https://github.com/awdr74100/figwright/compare/v0.2.0...v0.3.0)
+
+### 🚀 Enhancements
+
+- **get_design_context:** Surface mixed-text segments + WRAP cross-axis spacing, omit no-op defaults ([#14](https://github.com/awdr74100/figwright/pull/14))
+- **set_layout_props:** Set layoutSizingHorizontal/Vertical (HUG/FILL/FIXED) ([#19](https://github.com/awdr74100/figwright/pull/19))
+- **set_position:** Add set_position tool for exact node placement ([#20](https://github.com/awdr74100/figwright/pull/20))
+- **ping:** Surface leader/follower version skew (zombie-leader warning) ([#21](https://github.com/awdr74100/figwright/pull/21))
+- **figma-build:** Ground build values in source code + a sensible scale ([#23](https://github.com/awdr74100/figwright/pull/23))
+- **get_design_context:** Carry non-text overrides on deduped instances ([#24](https://github.com/awdr74100/figwright/pull/24))
+- Surface layout grids, dashed strokes & rich-text structure; add set_layout_grids ([#31](https://github.com/awdr74100/figwright/pull/31))
+- Surface per-run design-system token bindings on mixed TEXT runs ([#32](https://github.com/awdr74100/figwright/pull/32))
+- Add set_text_range — inline rich-text authoring (setRange* writes) ([#33](https://github.com/awdr74100/figwright/pull/33))
+- **get_screenshot:** Auto-fit default raster scale & report exported size ([#36](https://github.com/awdr74100/figwright/pull/36))
+- **read:** Carry paragraph fields & textAutoResize, refuse unknown get_design_context roots, widen get_node budgets ([#35](https://github.com/awdr74100/figwright/pull/35))
+- **set_text_properties:** Write paragraphSpacing / paragraphIndent ([#38](https://github.com/awdr74100/figwright/pull/38))
+- **read:** Surface Variable.codeSyntax on resolved tokens & variable defs ([#39](https://github.com/awdr74100/figwright/pull/39))
+- **set_variable_code_syntax:** Declare a variable's code-side token name ([#40](https://github.com/awdr74100/figwright/pull/40))
+- **token_map:** Surface per-theme values for multi-mode variable collections ([#42](https://github.com/awdr74100/figwright/pull/42))
+- **design_diff:** Report per-node design changes against a saved baseline ([#43](https://github.com/awdr74100/figwright/pull/43))
+- **component-property:** Author boolean/text/instance-swap component properties ([#44](https://github.com/awdr74100/figwright/pull/44))
+- **layout:** Read and author min/max size bounds (minWidth/maxWidth/minHeight/maxHeight) ([#51](https://github.com/awdr74100/figwright/pull/51))
+- **set_auto_layout:** Author the wrap cross-axis (counterAxisSpacing / counterAxisAlignContent) ([#52](https://github.com/awdr74100/figwright/pull/52))
+- **save_image_fills:** Extract original image-fill bytes to disk ([#54](https://github.com/awdr74100/figwright/pull/54))
+- **get_design_context:** Node-count bail, payload-size net, and below-full note on the public path ([#58](https://github.com/awdr74100/figwright/pull/58))
+- **get_design_context:** Default to the full codegen view with graceful degradation ([#59](https://github.com/awdr74100/figwright/pull/59))
+- **get_design_context:** Annotate raw colors with the project's design tokens (value-reverse join) ([#60](https://github.com/awdr74100/figwright/pull/60))
+- **token_map:** Join a document's shared paint styles as design tokens ([#61](https://github.com/awdr74100/figwright/pull/61))
+- **get_design_context:** Surface aspect-ratio, sticky, stacking, image filters & Dev Mode annotations ([#62](https://github.com/awdr74100/figwright/pull/62))
+- **component_map,token_map:** Mapping write-back loop + stale-override degradation ([#64](https://github.com/awdr74100/figwright/pull/64))
+- **component_map,profile:** Flag near-tie component picks + first-class Solid ([#65](https://github.com/awdr74100/figwright/pull/65))
+- **component_map,profile:** First-class Angular framework support ([#66](https://github.com/awdr74100/figwright/pull/66))
+- **styles:** Update_text_style + update_effect_style (write-side parity) ([#67](https://github.com/awdr74100/figwright/pull/67))
+
+### 🩹 Fixes
+
+- **server:** Self-terminate on stdin EOF to prevent zombie leaders ([#22](https://github.com/awdr74100/figwright/pull/22))
+- **plugin:** Connect promptly when the plugin is opened before the MCP server ([#28](https://github.com/awdr74100/figwright/pull/28))
+- **election:** Don't attach as a follower of a non-Figwright process on :3055 ([#29](https://github.com/awdr74100/figwright/pull/29))
+- Strip stray NUL byte in set-text-range, tidy types & dedupe binding logic ([#34](https://github.com/awdr74100/figwright/pull/34))
+- **batch:** Snapshot every field a write mutates so rollback is all-or-nothing ([#45](https://github.com/awdr74100/figwright/pull/45))
+- **mcp:** Derive destructiveHint from tool specs, not a hand-kept list ([#46](https://github.com/awdr74100/figwright/pull/46))
+- **mcp:** Normalize pasted Figma URLs on every canvas-id argument ([#47](https://github.com/awdr74100/figwright/pull/47))
+- **token_map:** Disambiguate color value-matches shared by several project tokens ([#56](https://github.com/awdr74100/figwright/pull/56))
+- **prompts:** Sync the distilled prompts with current tools and guard tool names ([#57](https://github.com/awdr74100/figwright/pull/57))
+
+### 💅 Refactors
+
+- **repo-walk:** Replace experimental node:fs glob with fdir ([#55](https://github.com/awdr74100/figwright/pull/55))
+
+### 📖 Documentation
+
+- **agents:** Add Engineering standard — equal-or-better bar, root-cause depth, no gold-plating ([#15](https://github.com/awdr74100/figwright/pull/15))
+- **tools:** Enrich low-scoring tool descriptions for Glama TDQS ([#16](https://github.com/awdr74100/figwright/pull/16))
+- **readme:** Collapse duplicated dev section into a CONTRIBUTING pointer ([#17](https://github.com/awdr74100/figwright/pull/17))
+- **readme:** Add bidirectional demo GIFs and a plugin tour ([#18](https://github.com/awdr74100/figwright/pull/18))
+- **readme:** Clarify -32000 / Connection closed in the startup FAQ ([#27](https://github.com/awdr74100/figwright/pull/27))
+- **tools:** Truthful, steering descriptions for the hot read tools ([#37](https://github.com/awdr74100/figwright/pull/37))
+- Sync npm README tool count with the registry and fix stale manifest reasoning ([#49](https://github.com/awdr74100/figwright/pull/49))
+- Reword server description and add Codex to client mentions ([#68](https://github.com/awdr74100/figwright/pull/68))
+
+### 🏡 Chore
+
+- Skip changelogen GitHub release prompt in pnpm release ([#13](https://github.com/awdr74100/figwright/pull/13))
+
+### ✅ Tests
+
+- **design-context:** Guard every serialized dimension against silent projection drops ([#48](https://github.com/awdr74100/figwright/pull/48))
+
+### 🤖 CI
+
+- Fail lint on warnings and drop stale tooling leftovers ([#50](https://github.com/awdr74100/figwright/pull/50))
+
+### ❤️ Contributors
+
+- Roya ([@awdr74100](https://github.com/awdr74100))
+
 ## v0.2.0
 
 [compare changes](https://github.com/awdr74100/figwright/compare/v0.1.0...v0.2.0)
