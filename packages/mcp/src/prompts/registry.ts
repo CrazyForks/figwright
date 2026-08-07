@@ -1,5 +1,5 @@
-import type { GetPromptResult, Prompt } from '@modelcontextprotocol/sdk/types.js';
-import type { ZodRawShape } from 'zod';
+import type { GetPromptResult, Prompt } from '@modelcontextprotocol/server';
+import type { z, ZodType } from 'zod';
 
 import { codeToFigmaPrompt } from './code-to-figma.js';
 import { figmaToCodePrompt } from './figma-to-code.js';
@@ -11,10 +11,27 @@ import { figmaToCodePrompt } from './figma-to-code.js';
 // the advertised argument list from argsSchema). PROMPT_DEFINITIONS / buildPrompt remain as the
 // pure, transport-free view the unit tests exercise.
 
+/**
+ * A prompt's arguments as a Zod object, matching how {@link ToolSpec} carries a tool's — one built
+ * instance shared by registration and by anything that needs to inspect it, rather than a raw shape
+ * rebuilt at the boundary.
+ *
+ * MCP prompt arguments are strings on the wire, so every member is a schema over `string`; an
+ * optional one simply arrives absent. Keeping that in the type is what lets `index.ts` hand the
+ * builder straight to `registerPrompt` with its return type still checked — a widened shape forced
+ * a cast that erased the whole callback signature.
+ */
+export type PromptArgsSchema = z.ZodObject<
+  Record<string, ZodType<string | undefined, string | undefined>>
+>;
+
+/** Arguments as they reach a prompt's builder: strings, with omitted optional ones absent. */
+export type PromptArgs = Record<string, string | undefined>;
+
 interface PromptEntry {
   definition: Prompt;
-  argsSchema: ZodRawShape;
-  build: (args: Record<string, string> | undefined) => GetPromptResult;
+  argsSchema: PromptArgsSchema;
+  build: (args: PromptArgs | undefined) => GetPromptResult;
 }
 
 export const PROMPTS: readonly PromptEntry[] = [figmaToCodePrompt, codeToFigmaPrompt];
@@ -23,7 +40,5 @@ export const PROMPTS: readonly PromptEntry[] = [figmaToCodePrompt, codeToFigmaPr
 export const PROMPT_DEFINITIONS: readonly Prompt[] = PROMPTS.map(p => p.definition);
 
 /** Build a prompt's messages by name, or null when no such prompt is registered. */
-export const buildPrompt = (
-  name: string,
-  args: Record<string, string> | undefined,
-): GetPromptResult | null => PROMPTS.find(p => p.definition.name === name)?.build(args) ?? null;
+export const buildPrompt = (name: string, args: PromptArgs | undefined): GetPromptResult | null =>
+  PROMPTS.find(p => p.definition.name === name)?.build(args) ?? null;

@@ -1,4 +1,7 @@
-import type { GetPromptResult, Prompt } from '@modelcontextprotocol/sdk/types.js';
+import type { GetPromptResult, Prompt } from '@modelcontextprotocol/server';
+import { z } from 'zod';
+
+import type { PromptArgs } from './registry.js';
 
 // The cross-client twin of the figma-build Claude Code skill: a distilled, guided workflow any MCP
 // client (Cursor / Windsurf / Claude Desktop) can surface as a slash command. The deep version lives
@@ -27,8 +30,8 @@ Rules: reuse beats regenerate (instance existing components, bind existing varia
 
 export const codeToFigmaPrompt: {
   definition: Prompt;
-  argsSchema: Record<string, never>;
-  build: (args: Record<string, string> | undefined) => GetPromptResult;
+  argsSchema: z.ZodObject<Record<string, never>>;
+  build: (args: PromptArgs | undefined) => GetPromptResult;
 } = {
   definition: {
     name: CODE_TO_FIGMA_PROMPT_NAME,
@@ -39,7 +42,7 @@ export const codeToFigmaPrompt: {
       'create_instance + bind_variable_to_paint / bind_variable_to_node).',
     arguments: [],
   },
-  argsSchema: {},
+  argsSchema: z.object({}),
   build: (): GetPromptResult => ({
     description: 'Code → Figma: build from the design system (reuse components, reference tokens)',
     messages: [

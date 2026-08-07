@@ -1,7 +1,7 @@
 import { DEFAULT_PORT, type GetScreenshotResult, newId, PROTOCOL_VERSION } from '@figwright/shared';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import type { CallToolResult, ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
+import { McpServer } from '@modelcontextprotocol/server';
+import type { CallToolResult } from '@modelcontextprotocol/server';
+import { serveStdio, StdioServerTransport } from '@modelcontextprotocol/server/stdio';
 
 import pkg from '../package.json' with { type: 'json' };
 import { BUILD_ID } from './build-id.js';
@@ -10,10 +10,12 @@ import { Election } from './election/election.js';
 import { Follower } from './election/follower.js';
 import { attachLeaderEndpoints } from './election/leader-endpoints.js';
 import { Node, NodeRole } from './election/node.js';
+import { SERVER_INSTRUCTIONS } from './instructions.js';
 import { wireShutdown } from './lifecycle.js';
 import { normalizeIdArgs } from './node-id.js';
 import { PROMPTS } from './prompts/registry.js';
 import { ANALYZE_PROJECT_TOOL_NAME, handleAnalyzeProject } from './tools/analyze-project.js';
+import { annotationsFor } from './tools/annotations.js';
 import { COMPONENT_MAP_TOOL_NAME, handleComponentMap } from './tools/component-map.js';
 import { handleDesignContext } from './tools/design-context-guard.js';
 import { DESIGN_DIFF_TOOL_NAME, handleDesignDiff } from './tools/design-diff.js';
@@ -27,7 +29,6 @@ import { ALL_TOOL_SPECS } from './tools/registry.js';
 import { handleSaveImageFills, SAVE_IMAGE_FILLS_TOOL_NAME } from './tools/save-image-fills.js';
 import { handleSaveScreenshots, SAVE_SCREENSHOTS_TOOL_NAME } from './tools/save-screenshots.js';
 import { handleScanComponents, SCAN_COMPONENTS_TOOL_NAME } from './tools/scan-components.js';
-import type { ToolSpec } from './tools/spec.js';
 import { handleTokenMap, TOKEN_MAP_TOOL_NAME } from './tools/token-map.js';
 
 const SERVER_NAME = 'figwright';
@@ -70,8 +71,6 @@ node.onRoleChange(role => {
 });
 
 await election.start();
-
-const mcp = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
 
 type ToolHandler = (args: Record<string, unknown>) => Promise<CallToolResult>;
 
@@ -142,44 +141,55 @@ const SPECIAL_HANDLERS: Record<string, ToolHandler> = {
     textResult(await handleDesignContext(dispatch, args)),
 };
 
-// Annotations are derived from each spec, never hand-kept here: `kind` drives readOnlyHint and the
-// spec's own `destructive` flag drives destructiveHint (a registry test asserts every delete_*
-// carries it, so a new destructive tool can't ship silently marked "non-destructive").
-const annotationsFor = (spec: ToolSpec): ToolAnnotations =>
-  spec.kind === 'write'
-    ? { readOnlyHint: false, destructiveHint: spec.destructive === true }
-    : { readOnlyHint: true };
-
-for (const spec of ALL_TOOL_SPECS) {
-  const run: ToolHandler =
-    SPECIAL_HANDLERS[spec.name] ??
-    (async args => {
-      // Inject a stable idempotency key for writes before the (possibly retrying) dispatch.
-      const dispatchArgs = spec.kind === 'write' ? { ...args, requestId: newId() } : args;
-      return textResult(await dispatch(spec.name, dispatchArgs));
-    });
-  // Normalize id args (a pasted Figma URL or dash-form node id → canonical colon id) once here, so
-  // every tool — generic or special-cased — accepts them without per-handler conversion.
-  const handler: ToolHandler = async args => run(normalizeIdArgs(args) as Record<string, unknown>);
-  // Cast: registerTool is generic per inputShape; this loop registers heterogeneous specs uniformly.
-  mcp.registerTool(
-    spec.name,
-    {
-      description: spec.description,
-      inputSchema: spec.inputShape,
-      annotations: annotationsFor(spec),
-    },
-    handler as never,
+// serveStdio owns the era decision for the connection: it reads the opening exchange, pins ONE
+// instance from this factory for the connection's lifetime, and passes everything after straight
+// through. A 2025-era client is served exactly as `new StdioServerTransport()` + `connect()` served
+// it; a 2026-07-28 client negotiates the modern revision instead — which a hand-wired transport
+// can't do. On stdio there is exactly one connection per process, so this runs once.
+const createMcpServer = (): McpServer => {
+  const mcp = new McpServer(
+    { name: SERVER_NAME, version: SERVER_VERSION },
+    { instructions: SERVER_INSTRUCTIONS },
   );
-}
 
-for (const prompt of PROMPTS) {
-  mcp.registerPrompt(
-    prompt.definition.name,
-    { description: prompt.definition.description ?? '', argsSchema: prompt.argsSchema },
-    ((args: Record<string, string>) => prompt.build(args)) as never,
-  );
-}
+  for (const spec of ALL_TOOL_SPECS) {
+    const run: ToolHandler =
+      SPECIAL_HANDLERS[spec.name] ??
+      (async args => {
+        // Inject a stable idempotency key for writes before the (possibly retrying) dispatch.
+        const dispatchArgs = spec.kind === 'write' ? { ...args, requestId: newId() } : args;
+        return textResult(await dispatch(spec.name, dispatchArgs));
+      });
+    // Normalize id args (a pasted Figma URL or dash-form node id → canonical colon id) once here, so
+    // every tool — generic or special-cased — accepts them without per-handler conversion.
+    const handler: ToolHandler = async args => run(normalizeIdArgs(args));
+    // The spec's own Zod object goes straight through: it is already the Standard Schema object the
+    // SDK wants. Registering heterogeneous specs through one loop needed a handler cast under v1;
+    // v2's typing accepts ToolHandler directly, so the result stays checked against CallToolResult.
+    mcp.registerTool(
+      spec.name,
+      {
+        description: spec.description,
+        inputSchema: spec.inputSchema,
+        annotations: annotationsFor(spec),
+      },
+      handler,
+    );
+  }
+
+  for (const prompt of PROMPTS) {
+    mcp.registerPrompt(
+      prompt.definition.name,
+      {
+        description: prompt.definition.description ?? '',
+        argsSchema: prompt.argsSchema,
+      },
+      args => prompt.build(args),
+    );
+  }
+
+  return mcp;
+};
 
 /**
  * A stdio transport that reports its own death.
@@ -208,17 +218,17 @@ class SelfReportingStdioTransport extends StdioServerTransport {
 
 // Deferred because the trigger only exists once wireShutdown has run, and that needs the transport.
 let triggerShutdown = (): void => {};
-const transport = new SelfReportingStdioTransport(() => {
-  triggerShutdown();
+const stdio = serveStdio(createMcpServer, {
+  // serveStdio would otherwise construct its own transport, and we need one that reports its death.
+  transport: new SelfReportingStdioTransport(() => {
+    triggerShutdown();
+  }),
+  // Unset, serveStdio discards transport errors outright, so the one message naming the cause
+  // (e.g. "ReadBuffer exceeded maximum size of 10485760 bytes") never reaches the user's stderr.
+  onerror: (error: Error): void => {
+    log(`[figwright] stdio transport error: ${error.message}`);
+  },
 });
-// Assigned before connect, which chains rather than replaces it. Without this a transport-level
-// failure is discarded entirely — the SDK's own default is to forward to a handler nobody set — so
-// the one message naming the cause (e.g. "ReadBuffer exceeded maximum size of 10485760 bytes")
-// never reaches the stderr the user is reading.
-transport.onerror = (error: Error): void => {
-  log(`[figwright] stdio transport error: ${error.message}`);
-};
-await mcp.connect(transport);
 
 const roleDetail = node.isLeader()
   ? `relay on :${node.getLeader()?.port ?? PORT}`
@@ -230,6 +240,10 @@ log(
 );
 
 const shutdown = async (): Promise<void> => {
+  // serveStdio owns the transport it started, so it has to be the one to close it — closing the
+  // pinned instance and detaching from stdin. Its own errors must not skip the relay teardown
+  // below: the relay port is the resource a zombie would hold, and stdio is already going away.
+  await stdio.close().catch(() => {});
   election.stop();
   await node.stop();
   process.exit(0);
